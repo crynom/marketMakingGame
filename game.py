@@ -12,10 +12,11 @@ BOTUNITMAX = 10
     # Intelligently scale the spread based on difficulty and the available information. Maybe create a space of possible spreads based on the number of missing cards and difficulty and do a random choice from there.
     # Intelligently scale unit sizing for bots, right now they choose randomly between 0 and BOTUNITMAX
 
-    # fix user pnl calculation and add within spread functionality !!
+    # create start menu for modifying game parameters
+    # bot profit is not accurate?
 
 '''
-This is a CLI game and it made for windows... sorry!
+This is a CLI game and it's made for windows... sorry!
 Inputs have not been santized and I cannot be bothered to do it!
 
 Game
@@ -83,7 +84,6 @@ class Game:
     def getCards(self) -> list[list[int], list[bool]]:
         '''
         Gets cards for a single round of play.
-
         '''
         board = [[None] * self.cards, [None] * self.cards]
         deck = self.deck
@@ -97,13 +97,39 @@ class Game:
 
     def printBoard(self, board: list[list[int], list[bool]], gameStage: int = 0) -> None:
         '''
-        Prints the board
+        Prints the board.
         '''
         os.system('cls')
-        print('This round we have:\n')
+        print('\nThis round we have:\n')
         boardRepr = '\t\t' + ' | '.join(['X' if gameStage == 2 else str(self.cardRepr.get(card, card)) if faceUp or gameStage == 1 else 'X' for card, faceUp in zip(board[0], board[1])])
         print(boardRepr)
 
+
+    def recordProfit(self, bots: list[int], maker: int, board: list[int], quotes: dict[int:list[int, int]], quote: list[int, int]) -> int:
+        '''
+        Records the profit for each bot who is not making the market and returns the market maker's profit.
+        '''
+        makerProfit = 0
+        for i in bots:
+            bot = self.players[i]
+            if i == maker: continue
+            if quotes[i][0] >= quote[1]:
+                # long
+                botUnits = random.randint(0, BOTUNITMAX)
+                botProfit = (sum(board) - quote[1]) * botUnits
+                bot.balance += botProfit
+                bot.history.append({'action':'buy', 'units':botUnits, 'profit':botProfit})
+                makerProfit -= botProfit
+            elif quotes[i][1] <= quote[0]:
+                # short
+                botUnits = random.randint(0, BOTUNITMAX)
+                botProfit = (quote[0] - sum(board)) * botUnits
+                bot.balance += botProfit
+                bot.history.append({'action':'sell', 'units':botUnits, 'profit':botProfit})
+                makerProfit -= botProfit
+        self.players[maker].history.append({'action':'maker', 'units':0, 'profit':makerProfit})
+        return makerProfit
+ 
 
     def playRound(self, roundNumber: int) -> None:
         '''
@@ -138,30 +164,14 @@ class Game:
             time.sleep(SLEEP)
             return None
 
-        makerProfit = 0
-        for i in bots:
-            bot = self.players[i]
-            if i == maker: continue
-            if quotes[i][0] >= quote[1]:
-                # long
-                botUnits = random.randint(0, BOTUNITMAX)
-                botProfit = (sum(board[0]) - quote[1]) * botUnits
-                bot.balance += botProfit
-                bot.history.append({'action':'buy', 'units':botUnits, 'profit':botProfit})
-                makerProfit -= botProfit
-            elif quotes[i][1] <= quote[0]:
-                # short
-                botUnits = random.randint(0, BOTUNITMAX)
-                botProfit = (quote[0] - sum(board[0])) * botUnits
-                bot.balance += botProfit
-                bot.history.append({'action':'sell', 'units':botUnits, 'profit':botProfit})
-                makerProfit -= botProfit
-        self.players[maker].history.append({'action':'maker', 'units':0, 'profit':makerProfit})
-
+        makerProfit = self.recordProfit(bots, maker, board[0], quotes, quote)
+         
         # user makes market
         if self.user == maker:
             self.printBoard(board, gameStage=1)
-            print(f'\nYou quoted {quote[0]} at {quote[1]}.')
+            print(f'\nYou quoted {quote[0]} at {quote[1]}.\n\nThe realized value ({sum(board[0])}) was {"in" if sum(board[0]) >= quote[0] and sum(board[0]) <= quote[1] else "outside"} your spread.')
+            ev = sum([card for card, faceUp in zip(board[0], board[1]) if faceUp]) + self.cardEV * board[1].count(0)
+            print(f'\nThe expected value {ev} was "in if ev >= quote[0] and eve <= quote[1] else outside" your spread.')
             time.sleep(SHOWBOARD + SLEEP)
             user.balance += makerProfit
             return None
@@ -187,7 +197,7 @@ class Game:
                     user.balance -= 50
                     time.sleep(SLEEP)
                     return None
-                profit = (quote[1] - sum(board[0])) * units
+                profit = (sum(board[0]) - quote[1]) * units
 
             elif 's' == action:
                 long = False
@@ -196,7 +206,7 @@ class Game:
                     user.balance -= 50
                     time.sleep(SLEEP)
                     return None
-                profit = (sum(board[0]) - quote[1]) * units
+                profit = (quote[0] - sum(board[0])) * units
             
             self.players[maker].history[-1]['profit'] -= profit
             
@@ -216,21 +226,36 @@ class Game:
 
             userProfit = int(''.join([d for d in userProfit if d.isnumeric() or d == '-']))
             if userProfit != profit:
-                print(f'You miscalculated your profit! You have been penalized 50 units{"" if profit <= 0 else " and have forfeited any gains"}.')
+                print(f'You miscalculated your profit as {userProfit} instead of {profit}! You have been penalized 50 units{"" if profit <= 0 else " and have forfeited any gains"}.')
                 user.balance -= 50
                 user.balance += profit if profit < 0 else 0
                 user.history.append({'action':'buy' if action == 'b' else 'sell', 'units':units, 'profit': profit if profit < 0 else 0})
             else:
                 user.balance += profit
                 user.history.append({'action':'buy' if action == 'b' else 'sell', 'units':units, 'profit': profit})
-        
-    def printSummary(self):
-        # add to this
-        print(self.players[self.user].balance)
+            time.sleep(SLEEP)
+
+    def printSummary(self) -> None:
+        '''
+        Prints the summary after the game.
+        '''
+        rankedPlayers = []
+        for i, player in enumerate(self.players[:]):
+            if not rankedPlayers or player.balance > rankedPlayers[0][1].balance: rankedPlayers = [(i, player)] + rankedPlayers
+            else: rankedPlayers.append((i, player))
+        os.system('cls')
+        print(f'\n{"*"*8} LEADERBOARDS {"*"*8}')
+        for i, rankedPlayer in enumerate(rankedPlayers):
+            print(f'{i}. {rankedPlayer[1].balance} - {"You" if rankedPlayer[0] == self.user else f"Player {rankedPlayer[0]}"}')
+        print()
+        os.system('Pause')
+        print('\nThanks for playing!')
+        time.sleep(SLEEP)
+        os.system('cls')
 
     def playGame(self) -> None:
         '''
-        Runs the game loop
+        Runs the game loop.
         '''
         print(f'\n{"*"*8} Welcome to the game! {"*"*8}')
         for i in range(self.numRounds * len(self.players)):
@@ -264,5 +289,19 @@ class Player:
         quote = [int(q) for q in quoteInput]
         return quote
             
-game = Game()
-game.playGame()
+
+if __name__ == '__main__':
+    
+    args = sys.argv
+    if len(args) == 1:
+        pass
+    else:
+        pass
+        # flag passing
+    game = Game()
+    playAgain = True
+    while playAgain:
+        game.playGame()
+        playAgain = 'y' in input('\nDo you want to play again [y/n]? ')
+
+
