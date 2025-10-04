@@ -14,6 +14,7 @@ BOTUNITMAX = 10
 
     # create start menu for modifying game parameters
     # bot profit is not accurate?
+    # add a real UI using Textualize for funsies
 
 '''
 This is a CLI game and it's made for windows... sorry!
